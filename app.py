@@ -2,16 +2,19 @@ import io
 import zipfile
 from PIL import Image
 import streamlit as st
+from streamlit_image_coordinates import streamlit_image_coordinates
 
 # إعدادات الصفحة
 st.set_page_config(
-    page_title="أداة قص الصور الجماعية", page_icon="✂️", layout="wide"
+    page_title="أداة قص الصور الذكية", page_icon="✂️", layout="wide"
 )
 
-st.title("✂️ أداة قص الصور الجماعية (Batch Image Cropper)")
+st.title(
+    "✂️ أداة قص الصور الجماعية (مع ميزة تحديد البكسل بالضغط المباشر 🖱️)"
+)
 st.write(
-    "ارفع مجموعة صور، حدد أبعاد القص من الهوامش، وسيتم تطبيقها على كل الصور دفعة"
-    " واحدة مع زر لتنزيلها جميعاً بملف واحد."
+    "ارفع صورك، اضغط على أي نقطة في الصورة لمعرفة إحداثياتها بالبكسل بدقة،"
+    " وحدد أبعاد القص بناءً عليها!"
 )
 
 # رفع الصور متعددة
@@ -24,18 +27,45 @@ uploaded_files = st.file_uploader(
 if uploaded_files:
   st.success(f"تم رفع {len(uploaded_files)} صورة بنجاح! 🎉")
 
-  # قراءة الصورة الأولى لأخذ الأبعاد ومعاينتها
+  # قراءة الصورة الأولى لأخذ الأبعاد المرجعية
   first_image = Image.open(uploaded_files[0])
   width, height = first_image.size
 
   st.info(
-      f"📐 أبعاد الصورة الأولى: **{width} × {height} بكسل**. (يُفضل أن تكون باقي"
-      " الصور قريبة من هذه الأبعاد لتجانس القص)."
+      f"📐 المقاس المرجعي للصورة الأولى: **{width} × {height} بكسل**. سيتم توحيد"
+      " بقية الصور على هذا المقاس تلقائياً."
   )
+
+  # قسم خاص بالضغط المباشر لمعرفة الإحداثيات
+  st.markdown("---")
+  st.subheader(
+      "🎯 خريطة البكسل: اضغط على أي مكان في الصورة أدناه لمعرفة إحداثياته"
+      " (X, Y)"
+  )
+
+  # عرض الصورة مع إمكانية التقاط مكان الضغط
+  coords = streamlit_image_coordinates(first_image, key="click_coords")
+
+  if coords is not None:
+    clicked_x = coords["x"]
+    clicked_y = coords["y"]
+    st.success(
+        f"📍 النقطة التي ضغطت عليها إحداثياتها: **X = {clicked_x}**, **Y ="
+        f" {clicked_y}** بكسل"
+    )
+  else:
+    st.info(
+        "💡 نصيحة: اضغط بالماوس على أي حرف، أو شريط، أو أداة في الصورة بالأعلى"
+        " لتعرف إحداثياتها بدقة."
+    )
+
+  st.markdown("---")
 
   # لوحة التحكم الجانبية للقص
   st.sidebar.header("⚙️ إعدادات القص (بالبكسل)")
-  st.sidebar.write("حدد الهوامش المراد قصها من أطراف الصور:")
+  st.sidebar.write(
+      "استخدم الإحداثيات اللي ظهرتلك فوق لضبط هوامش القص بدقة تامة:"
+  )
 
   crop_top = st.sidebar.slider(
       "قص من الأعلى (Top)", 0, height // 2, 0, step=5
@@ -57,7 +87,7 @@ if uploaded_files:
   # التحقق من صحة الأبعاد
   if left_box < right_box and upper_box < lower_box:
     # معاينة القص على الصورة الأولى
-    st.subheader("👁️ معاينة القص على أول صورة")
+    st.subheader("👁️ معاينة القص النهائية على أول صورة")
     preview_img = first_image.crop((left_box, upper_box, right_box, lower_box))
 
     col1, col2 = st.columns(2)
@@ -72,7 +102,7 @@ if uploaded_files:
 
     # زر بدء المعالجة والتنزيل
     if st.button(
-        "🚀 معالجة وقص كل الصور دفعة واحدة",
+        "🚀 توحيد المقاسات وقص كل الصور دفعة واحدة",
         type="primary",
         use_container_width=True,
     ):
@@ -81,42 +111,41 @@ if uploaded_files:
       with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
         for idx, uploaded_file in enumerate(uploaded_files):
           img = Image.open(uploaded_file)
-          w, h = img.size
 
-          # ضبط القيم لكل صورة بحسب أبعادها لتجنب الأخطاء
-          l = min(crop_left, w // 2)
-          t = min(crop_top, h // 2)
-          r = max(w - crop_right, l + 10)
-          b = max(h - crop_bottom, t + 10)
+          # 1. توحيد المقاس بناءً على الصورة الأولى
+          img_resized = img.resize((width, height), Image.Resampling.LANCZOS)
 
-          # تنفيذ القص
-          cropped = img.crop((l, t, r, b))
+          # 2. تنفيذ القص
+          cropped = img_resized.crop(
+              (left_box, upper_box, right_box, lower_box)
+          )
 
-          # حفظ الصورة في الذاكرة المؤقتة
+          # حفظ في الذاكرة المؤقتة
           img_byte_arr = io.BytesIO()
           img_format = img.format if img.format in ["PNG", "JPEG"] else "PNG"
           cropped.save(img_byte_arr, format=img_format)
           img_byte_arr.seek(0)
 
           # تسمية الملف داخل ملف الـ ZIP
-          file_name = f"cropped_{idx+1}_{uploaded_file.name}"
+          file_name = f"processed_{idx+1}_{uploaded_file.name}"
           zip_file.writestr(file_name, img_byte_arr.read())
 
       zip_buffer.seek(0)
-      st.success("✨ تم قص جميع الصور بنجاح جاهزة للتحميل!")
+      st.success(
+          "✨ تم توحيد مقاسات الصور وقصها بنجاح وأصبحت جاهزة للتحميل!"
+      )
 
       # زر التنزيل للكل
       st.download_button(
-          label="📥 تحميل جميع الصور القصيرة (ZIP)",
+          label="📥 تحميل جميع الصور المعالجة (ZIP)",
           data=zip_buffer,
-          file_name="cropped_images.zip",
+          file_name="processed_images.zip",
           mime="application/zip",
           use_container_width=True,
       )
   else:
     st.error(
-        "⚠️ خطأ: إعدادات القص التي أدخلتها أكبر من أبعاد الصورة الفعلية، يرجى"
-        " تعديل المؤشرات."
+        "⚠️ خطأ: إعدادات القص أكبر من أبعاد الصورة، يرجى تعديل المؤشرات."
     )
 else:
-  st.info("📂 الرجاء رفع مجموعة الصور التي ترغب في قصها للبدء.")
+  st.info("📂 الرجاء رفع مجموعة الصور للبدء.")
